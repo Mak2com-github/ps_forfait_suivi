@@ -57,8 +57,8 @@ class Forfaits extends ObjectModel
 
     public static function convertSecondsToTime($seconds)
     {
-        $hours = floor($seconds / 3600);
-        $minutes = floor(($seconds % 3600) / 60);
-        return sprintf('%02d:%02d', $hours, $minutes);
+        // Utilisation de la méthode de Tasks pour éviter la duplication
+        require_once _PS_MODULE_DIR_ . '/ps_forfait_suivi/classes/Tasks.php';
+        return Tasks::convertSecondsToTime($seconds);
     }
 }

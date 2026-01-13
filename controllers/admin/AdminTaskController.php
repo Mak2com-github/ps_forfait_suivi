@@ -96,14 +96,16 @@ class AdminTaskController extends ModuleAdminController
     public function renderList()
     {
         $tasks = Tasks::getAllTasks();
-        $id_forfait = Db::getInstance()->executeS('SELECT `total_time` FROM `ps_forfaits`');
-        $timeForfait = Db::getInstance()->executeS('SELECT `total_time` FROM `ps_forfaits` WHERE `id_psforfait` = ' . (int)$id_forfait);
 
-        if (!empty($timeForfait)) {
-            if ($timeForfait[0]['total_time'] === '0') {
+        // Récupérer le premier forfait disponible
+        $firstForfait = Db::getInstance()->getRow('SELECT `id_psforfait`, `total_time` FROM `' . _DB_PREFIX_ . 'forfaits` ORDER BY `id_psforfait` DESC LIMIT 1');
+
+        if (!empty($firstForfait)) {
+            $totalTime = (int)$firstForfait['total_time'];
+            if ($totalTime === 0) {
                 $this->errors[] = $this->l('Le forfait est épuisé ! Temps restant : ') . '00:00';
             } else {
-                $remainingTime = Forfaits::convertSecondsToTime($timeForfait[0]['total_time']);
+                $remainingTime = Forfaits::convertSecondsToTime($totalTime);
                 $this->confirmations[] = $this->l('Le temps disponible sur le forfait est de ') . $remainingTime;
             }
         }
@@ -141,14 +143,14 @@ class AdminTaskController extends ModuleAdminController
             $submitName = "editTask";
         }
 
-        $requete = Db::getInstance()->executeS('SELECT `ps_forfaits`.`id_psforfait` FROM `ps_forfaits` LEFT JOIN `ps_tasks` ON `ps_forfaits`.`id_psforfait` = `ps_tasks`.`id_psforfait`');
-        $results = Db::getInstance()->executeS('SELECT `id_psforfait`, `title` FROM `ps_forfaits_lang`');
+        // Récupérer tous les forfaits disponibles
+        $results = Db::getInstance()->executeS('SELECT `id_psforfait`, `title` FROM `' . _DB_PREFIX_ . 'forfaits_lang` WHERE `id_lang` = ' . (int)Context::getContext()->language->id);
 
-        $id_forfait = Db::getInstance()->executeS('SELECT `total_time` FROM `ps_forfaits`');
-        $timeForfait = Db::getInstance()->executeS('SELECT `total_time` FROM `ps_forfaits` WHERE `id_psforfait` = ' . (int)$id_forfait);
+        // Récupérer le premier forfait pour afficher le temps disponible
+        $firstForfait = Db::getInstance()->getRow('SELECT `id_psforfait`, `total_time` FROM `' . _DB_PREFIX_ . 'forfaits` ORDER BY `id_psforfait` DESC LIMIT 1');
 
-        if (!empty($timeForfait)) {
-            $remainingTime = Forfaits::convertSecondsToTime($timeForfait[0]['total_time']);
+        if (!empty($firstForfait)) {
+            $remainingTime = Forfaits::convertSecondsToTime((int)$firstForfait['total_time']);
             $this->confirmations[] = $this->l('Le temps disponible sur le forfait est de ') . $remainingTime;
         }
         $options = array();
@@ -160,8 +162,6 @@ class AdminTaskController extends ModuleAdminController
                 'name' => 'title'
             );
         }
-
-        $timeForfait = Db::getInstance()->executeS('SELECT `total_time` FROM `ps_forfaits` WHERE `id_psforfait`');
 
         $this->fields_form = [
             'legend' => [
@@ -246,8 +246,8 @@ class AdminTaskController extends ModuleAdminController
         if (Tools::isSubmit("addTask")) {
             $total_time = Tools::getValue('total_time');
 
-            if (!preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $total_time)) {
-                $this->errors[] = $this->l('Le format du temps doit être de type HH:mm, avec des heures entre 00 et 23 et des minutes entre 00 et 59.');
+            if (!Tasks::isTimeFormat($total_time)) {
+                $this->errors[] = $this->l('Le format du temps doit être de type HH:mm (ex: 02:30, 30:00, 100:15).');
                 return false;
             }
 
@@ -258,8 +258,8 @@ class AdminTaskController extends ModuleAdminController
         if (Tools::isSubmit("editTask")) {
             $total_time = Tools::getValue('total_time');
 
-            if (!preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $total_time)) {
-                $this->errors[] = $this->l('Le format du temps doit être de type HH:mm, avec des heures entre 00 et 23 et des minutes entre 00 et 59.');
+            if (!Tasks::isTimeFormat($total_time)) {
+                $this->errors[] = $this->l('Le format du temps doit être de type HH:mm (ex: 02:30, 30:00, 100:15).');
                 return false;
             }
 
@@ -274,38 +274,44 @@ class AdminTaskController extends ModuleAdminController
 
     public function submitAddTask() {
         $actualTime = date('Y-m-d H:i:s');
+        $id_psforfait = (int)$_POST['id_psforfait'];
+        $timeTache = (int)$_POST['total_time'];
 
-        $timeForfait = Db::getInstance()->getValue('SELECT `total_time` FROM `ps_forfaits` WHERE `id_psforfait` = '.(int)$_POST['id_psforfait']);
+        // Vérifier que le forfait existe
+        $timeForfait = (int)Db::getInstance()->getValue('SELECT `total_time` FROM `' . _DB_PREFIX_ . 'forfaits` WHERE `id_psforfait` = ' . $id_psforfait);
 
-        $timeTache = $_POST['total_time'];
+        if (!$timeForfait && $timeForfait !== 0) {
+            $this->errors[] = $this->l('Le forfait sélectionné n\'existe pas.');
+            return false;
+        }
 
         $timeRestant = $timeForfait - $timeTache;
 
         if ($timeRestant >= 0) {
             Db::getInstance()->insert(Tasks::$definition['table'], array(
-                'id_psforfait' => $_POST['id_psforfait'],
+                'id_psforfait' => $id_psforfait,
                 'total_time' => $timeTache,
                 'current' => 1,
                 'created_at' => $actualTime,
                 'updated_at' => $actualTime
             ));
 
+            $id_task = (int)Db::getInstance()->Insert_ID();
             $languages = Language::getLanguages();
             foreach ($languages as $lang) {
                 $language = (int) $lang['id_lang'];
-                error_log($_POST['title_' . $language]);
                 Db::getInstance()->insert(Tasks::$definition['table'] . "_lang", array(
-                    'id_pstask' => (int) Db::getInstance()->Insert_ID(),
+                    'id_pstask' => $id_task,
                     'id_lang' => $language,
                     'title' => pSQL($_POST['title_' . $language]),
-                    'description' => pSQL($_POST['description_' . $language]),
-                ), 'id_psforfait = '.(int)$_POST['id_psforfait']);
+                    'description' => pSQL($_POST['description_' . $language], true),
+                ));
             }
 
             Db::getInstance()->update(Forfaits::$definition['table'], array(
                 'total_time' => $timeRestant,
                 'updated_at' => $actualTime
-            ), 'id_psforfait = '.(int)$_POST['id_psforfait']);
+            ), 'id_psforfait = ' . $id_psforfait);
         } else {
             $this->errors[] = $this->l('Le temps de la tâche dépasse le temps restant du forfait.');
         }
@@ -313,66 +319,65 @@ class AdminTaskController extends ModuleAdminController
 
     public function submitEditTasks() {
         $actualTime = date('Y-m-d H:i:s');
+        $id_pstask = (int)$_POST['id_pstask'];
+        $id_psforfait = (int)$_POST['id_psforfait'];
+        $timeTache = (int)$_POST['total_time'];
 
-        $timeForfait = Db::getInstance()->getValue('SELECT `total_time` FROM `ps_forfaits` WHERE `id_psforfait` = '.(int)$_POST['id_psforfait']);
-        $actualTimeTask = Db::getInstance()->getValue('SELECT `total_time` FROM `ps_tasks` WHERE `id_pstask` = '.(int)$_POST['id_pstask']);
-        $actualTaskStatus = Db::getInstance()->getValue('SELECT `current` FROM `ps_tasks` WHERE `id_pstask` = '.(int)$_POST['id_pstask']);
-        $timeTache = $_POST['total_time'];
+        $timeForfait = (int)Db::getInstance()->getValue('SELECT `total_time` FROM `' . _DB_PREFIX_ . 'forfaits` WHERE `id_psforfait` = ' . $id_psforfait);
+        $actualTimeTask = (int)Db::getInstance()->getValue('SELECT `total_time` FROM `' . _DB_PREFIX_ . 'tasks` WHERE `id_pstask` = ' . $id_pstask);
+        $actualTaskStatus = (int)Db::getInstance()->getValue('SELECT `current` FROM `' . _DB_PREFIX_ . 'tasks` WHERE `id_pstask` = ' . $id_pstask);
 
         $timeRemains = $timeForfait;
 
-        if ($actualTaskStatus === "1") {
-            if ((string)$timeTache !== $actualTimeTask) {
-                $timeRemains = $timeForfait - $timeTache;
+        // Si la tâche est active, recalculer le temps restant
+        if ($actualTaskStatus === 1) {
+            if ($timeTache !== $actualTimeTask) {
+                $timeRemains = $timeForfait - $timeTache + $actualTimeTask;
             }
         }
 
-        if ($actualTaskStatus === "1") {
+        if ($actualTaskStatus === 1) {
             if ($timeRemains >= 0) {
                 Db::getInstance()->update(Tasks::$definition['table'], array(
-                    'id_psforfait' => $_POST['id_psforfait'],
+                    'id_psforfait' => $id_psforfait,
                     'total_time' => $timeTache,
-                    'created_at' => $actualTime,
                     'updated_at' => $actualTime
-                ), 'id_pstask = '.(int)$_POST['id_pstask']);
+                ), 'id_pstask = ' . $id_pstask);
 
                 $languages = Language::getLanguages();
                 foreach ($languages as $lang) {
                     $language = (int) $lang['id_lang'];
-                    error_log($_POST['title_' . $language]);
                     Db::getInstance()->update(Tasks::$definition['table'] . "_lang", array(
                         'id_lang' => $language,
                         'title' => pSQL($_POST['title_' . $language]),
-                        'description' => pSQL($_POST['description_' . $language]),
-                    ), 'id_pstask = '.(int)$_POST['id_pstask']);
+                        'description' => pSQL($_POST['description_' . $language], true),
+                    ), 'id_pstask = ' . $id_pstask);
                 }
 
                 Db::getInstance()->update(Forfaits::$definition['table'], array(
                     'total_time' => $timeRemains,
                     'updated_at' => $actualTime
-                ), 'id_psforfait = '.(int)$_POST['id_psforfait']);
+                ), 'id_psforfait = ' . $id_psforfait);
             } else {
                 $this->errors[] = $this->l('Le temps de la tâche dépasse le temps restant du forfait.');
             }
         }
 
-        if ($actualTaskStatus === "0") {
+        if ($actualTaskStatus === 0) {
             Db::getInstance()->update(Tasks::$definition['table'], array(
-                'id_psforfait' => $_POST['id_psforfait'],
+                'id_psforfait' => $id_psforfait,
                 'total_time' => $timeTache,
-                'created_at' => $actualTime,
                 'updated_at' => $actualTime
-            ), 'id_pstask = '.(int)$_POST['id_pstask']);
+            ), 'id_pstask = ' . $id_pstask);
 
             $languages = Language::getLanguages();
             foreach ($languages as $lang) {
                 $language = (int) $lang['id_lang'];
-                error_log($_POST['title_' . $language]);
                 Db::getInstance()->update(Tasks::$definition['table'] . "_lang", array(
                     'id_lang' => $language,
                     'title' => pSQL($_POST['title_' . $language]),
-                    'description' => pSQL($_POST['description_' . $language]),
-                ), 'id_pstask = '.(int)$_POST['id_pstask']);
+                    'description' => pSQL($_POST['description_' . $language], true),
+                ), 'id_pstask = ' . $id_pstask);
             }
         }
     }

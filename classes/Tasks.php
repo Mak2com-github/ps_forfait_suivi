@@ -10,6 +10,7 @@ class Tasks extends ObjectModel
     public $id_psforfait;
     public $title;
     public $total_time;
+    public $current;
     public $description;
     public $status;
     public $created_at;
@@ -23,11 +24,11 @@ class Tasks extends ObjectModel
             // Standard fields
             'id_psforfait'    =>  ['type' => self::TYPE_INT, 'validate' => 'isUnsignedId', 'required' => true],
             'total_time'    => ['type' => self::TYPE_INT, 'validate' => 'isUnsignedInt', 'required' => true],
-            'current_time'    => ['type' => self::TYPE_INT, 'validate' => 'isUnsignedInt', 'required' => true],
+            'current'    => ['type' => self::TYPE_BOOL, 'validate' => 'isBool', 'required' => false],
             'created_at'     =>  ['type' => self::TYPE_DATE, 'validate' => 'isPhpDateFormat', 'required' => false],
             'updated_at'     =>  ['type' => self::TYPE_DATE, 'validate' => 'isPhpDateFormat', 'required' => false],
             // Lang fields
-            'title'     =>  ['type' => self::TYPE_STRING, 'validate' => 'isName', 'size' => 255, 'required' => true],
+            'title'     =>  ['type' => self::TYPE_STRING, 'lang' => true, 'validate' => 'isName', 'size' => 255, 'required' => true],
             'description'     =>  ['type' => self::TYPE_HTML, 'lang' => true, 'validate' => 'isCleanHtml', 'required' => true],
         ]
     ];
@@ -54,7 +55,8 @@ class Tasks extends ObjectModel
 
     public static function isTimeFormat($time)
     {
-        return preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $time);
+        // Support des durées supérieures à 24h (ex: 30:00, 100:00)
+        return preg_match('/^([0-9]{1,4}):[0-5][0-9]$/', $time);
     }
 
     public static function convertTimeToSeconds($time)
@@ -79,7 +81,7 @@ class Tasks extends ObjectModel
         return sprintf('%02d:%02d', $hours, $minutes);
     }
 
-    public function displayCurrentStatus($current, $row)
+    public static function displayCurrentStatus($current, $row)
     {
         if ($current == 1) {
             return '<span style="color:green; font-size: 18px;">●</span>';
